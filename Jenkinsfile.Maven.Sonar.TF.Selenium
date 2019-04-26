@@ -1,0 +1,74 @@
+pipeline {
+    agent none
+
+    environment {
+      HOME = "/var/lib/jenkins"
+    }
+    parameters {
+        booleanParam(defaultValue: true, description: "", name: 'sonar_scan')
+        booleanParam(defaultValue: true, description: "", name: 'tf_deploy')
+    }
+
+    stages {
+        stage("maven env") {
+            agent {
+                docker {
+                    image 'maven:3-alpine'
+                    args '-u root -v ${HOME}/.m2:/root/.m2 -v ${PWD}:/opt/maven -w /opt/maven'
+                }
+            }
+            stages {
+                stage('sonar') {
+                    when {
+                        beforeAgent true
+                        expression { params.sonar_scan == true }
+                    }
+                    steps {
+                        withSonarQubeEnv('sonar'){
+                            sh 'mvn -B clean compile sonar:sonar'
+                        }
+                    }
+                }
+                stage('test') {
+                    steps {
+                        sh 'mvn -B test'
+                    }
+                }
+                stage('build') {
+                    steps {
+                        sh 'mvn -B -DskipTests clean package'
+                    }
+                }
+                stage('push to nexus') {
+                    steps {
+                        sh 'mvn -B deploy'
+                    }
+                }
+            }
+        }
+        stage("terraform") {
+            agent any
+            when {
+                beforeAgent true
+                expression { params.tf_deploy == true }
+            }
+            steps {
+                sh '/usr/local/bin/terraform init'
+                sh '/usr/local/bin/terraform plan'
+                sh '/usr/local/bin/terraform apply -auto-approve'
+                sh 'sleep 60'
+            }
+        }
+        stage("automated selenium test") {
+            agent any
+            steps {
+                sh '/usr/bin/docker-compose up -d'
+                sh '''
+                    export DEMO_APP_IP=`/usr/local/bin/terraform output demo-app-ip` 
+                    docker run --rm -v "$(pwd)":/opt/maven -w /opt/maven --net="host" -v "$(pwd)":/root/.m2 maven:3.3.9-jdk-8 mvn clean verify -Durl="http://$DEMO_APP_IP:8080" -B
+                '''
+                sh '/usr/bin/docker-compose stop'
+            }
+        }
+    }
+}
