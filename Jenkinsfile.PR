@@ -1,0 +1,21 @@
+pipeline{
+    agent any    
+    environment {
+        MAJOR_VERSION = 1
+    }
+    stages {
+        stage('Test'){
+            steps {
+                sh 'node -v'
+                sh 'npm prune'
+                sh 'npm install'
+                sh 'npm test'
+            }
+        }
+        stage('Send PR'){
+            steps {
+                sh 'git request-pull v${env.MAJOR_VERSION}.${env.BUILD_NUMBER} ${REMOTE_URL} ${BRANCH_NAME}'
+            }
+        }
+    }
+}
